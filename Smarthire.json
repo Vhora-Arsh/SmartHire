@@ -1,0 +1,950 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "={{ Object.keys($binary)[0] }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -6768,
+        3344
+      ],
+      "id": "4ba324b0-81ec-4769-b533-7d19dbb9e6e2",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Fetch all rows arriving from the Merge Node\nconst mergedItems = $input.all();\nif (mergedItems.length === 0) return [];\n\n// Isolate the CV item text matrix\nconst firstRow = mergedItems[0].json;\nconst resumeText = (firstRow.text || '').toLowerCase();\n\n// BACKWARD-REFERENCE FIX: Grab the original raw records directly from the Airtable node history\n// This bypasses any data dropping caused by the Merge node!\nlet originalAirtableRecords = [];\ntry {\n  originalAirtableRecords = $('Search records').all();\n} catch (e) {\n  // Fallback to merged items if node naming is different\n  originalAirtableRecords = mergedItems;\n}\n\nlet detectedPosition = 'Unknown Position';\nlet highestScore = 0;\nlet isPositionOpen = false;\nlet winningIndex = -1;\nlet rawJdText = '';\nlet screeningInstructions = '';\n\n// 2. Loop over the original Airtable rows to perform strict matching\nfor (let i = 0; i < originalAirtableRecords.length; i++) {\n  const item = originalAirtableRecords[i].json;\n  const fields = item?.fields || item || {};\n  const positionTitle = fields['Opening Positions'];\n  if (!positionTitle) continue;\n  \n  const rawKeywords = fields['Associate Keywords'] || fields['Associate keywords'] || '';\n  const keywords = rawKeywords.split(',').map(k => k.trim().toLowerCase());\n  \n  let currentScore = 0;\n  \n  // Strict check: Exact job title matching\n  if (resumeText.includes(positionTitle.toLowerCase())) {\n    currentScore += 20; \n  }\n  \n  for (const keyword of keywords) {\n    if (keyword && resumeText.includes(keyword)) {\n      currentScore += keyword.split(' ').length;\n    }\n  }\n\n  if (currentScore > highestScore) {\n    highestScore = currentScore;\n    detectedPosition = positionTitle;\n    winningIndex = i;\n    \n    // Direct capture from the un-merged Airtable dataset\n    rawJdText = fields['Job Description Text'] || fields['jd_text'] || '';\n    screeningInstructions = fields['Instructions'] || fields['instructions'] || fields['Screening Instructions'] || '';\n    \n    const statusValue = fields['Is Active ?'] || fields['Is active ?'] || '';\n    isPositionOpen = String(statusValue).toLowerCase().trim() === 'yes';\n  }\n}\n\n// 3. Threshold Check: Filter out noise\nconst MINIMUM_MATCH_THRESHOLD = 3; \nconst isRealMatch = highestScore >= MINIMUM_MATCH_THRESHOLD;\n\nif (!isRealMatch) {\n  detectedPosition = 'Unknown Position';\n  winningIndex = -1;\n  isPositionOpen = false;\n  rawJdText = '';\n  screeningInstructions = '';\n}\n\n// 4. Dynamically capture the matching file from the Binary Tab using the merged items\nlet outputBinary = {};\nif (isRealMatch && winningIndex !== -1 && mergedItems[winningIndex]?.binary) {\n  const winningItem = mergedItems[winningIndex];\n  const binaryKeys = Object.keys(winningItem.binary);\n  const matchedKey = binaryKeys.find(key => key.toLowerCase().includes('job description'));\n  \n  if (matchedKey && winningItem.binary[matchedKey]) {\n    outputBinary['jdAttachment'] = winningItem.binary[matchedKey];\n  }\n}\n\n// 5. Parse candidate details from the CV text\nconst textLines = (firstRow.text || '').split('\\n').map(line => line.trim()).filter(line => line.length > 0);\nconst candidateName = textLines[0] || 'Unknown Candidate';\n\nconst emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/;\nconst foundEmail = (firstRow.text || '').match(emailRegex);\nconst candidateEmail = foundEmail ? foundEmail[0] : '';\n\n// 6. Return exactly ONE clean item with all fields preserved\nreturn [{\n  json: {\n    candidateName: candidateName,\n    candidateEmail: candidateEmail || 'recruitment@company.com',\n    emailBody: (firstRow.text || '').substring(0, 4000),\n    detectedPosition: detectedPosition,\n    isPositionOpen: isPositionOpen,\n    builtinJdText: rawJdText, \n    customInstructions: screeningInstructions\n  },\n  binary: Object.keys(outputBinary).length > 0 ? outputBinary : undefined\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6224,
+        3424
+      ],
+      "id": "49a2adba-9b44-470e-96fc-f07ee7db5165",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7871663e-c875-4bc3-8364-3de88ea1d205",
+              "leftValue": "={{ $json.isPositionOpen }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -6000,
+        3424
+      ],
+      "id": "ddbe1324-aaba-4097-b8c3-4eef7b54736c",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -6448,
+        3424
+      ],
+      "id": "05088048-c0fb-40b7-9c2b-e96a0c0e39a9",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "={{ Object.keys($binary)[0] }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -5776,
+        3328
+      ],
+      "id": "12e7a6a3-1475-41d7-8bab-2db21c6983ff",
+      "name": "jdFile"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9d0b9701-248b-4f0a-a5a8-95d3bec86a0b",
+              "name": "approve",
+              "value": "=approve_link: {{$execution.resumeUrl}}?action=approve",
+              "type": "string"
+            },
+            {
+              "id": "76a741b2-baa1-47c1-82d3-226f899f3850",
+              "name": "reject",
+              "value": "=reject_link: {{$execution.resumeUrl}}?action=reject",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -5216,
+        3328
+      ],
+      "id": "c26e1cd4-3440-4e69-8a38-77789c0ced36",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "HR choice for candidate",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "HR choice according to the screening",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Approve"
+                  },
+                  {
+                    "option": "Reject"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -4736,
+        3328
+      ],
+      "id": "ecfbd6b4-c3df-453f-9098-5bb47918a50e",
+      "name": "Wait",
+      "webhookId": "0160fb1d-5330-47b7-91bc-5c237bae1465"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e3a6447-e72f-4590-9c91-e862c1103e10",
+              "leftValue": "={{ $json['HR choice according to the screening'] }}",
+              "rightValue": "Approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4496,
+        3328
+      ],
+      "id": "002b6842-0418-4dcc-9284-017cd085be3a",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Gmail Trigger').item.json.threadId }}",
+        "emailType": "text",
+        "message": "=Hello,  {{ $json.candidateName }}\n\nWe would like to inform you that we reviewed your CV, but currently in our company there are no available position according to your CV.\n\nThank you for investing your time in sending the application.\n\nBest Regards,\nHR TEAM",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -5776,
+        3520
+      ],
+      "id": "9a149f09-8900-4d4c-814b-50d78cecddce",
+      "name": "Reply to a message",
+      "webhookId": "d21c29e1-fdd0-4156-b1a4-d7415dfde421",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "AqUGZy9BbsPkj6QJ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const workingStartHour = 10;\nconst workingEndHour = 18;\nconst slotIntervalMin = 30;\nconst daysToScan = 7;\nconst TIMEZONE = 'Asia/Kolkata';\n\n// ----------------------------------------------------\n// STEP 1: Read Google Calendar events\n// ----------------------------------------------------\n\nconst items = $input.all();\n\nconst busyEvents = items\n  .filter(item => item.json?.start && item.json?.end)\n  .map(item => {\n    const startValue =\n      item.json.start.dateTime ||\n      item.json.start.date;\n\n    const endValue =\n      item.json.end.dateTime ||\n      item.json.end.date;\n\n    return {\n      start: new Date(startValue),\n      end: new Date(endValue),\n    };\n  })\n  .filter(event =>\n    !isNaN(event.start.getTime()) &&\n    !isNaN(event.end.getTime())\n  )\n  .sort((a, b) => a.start - b.start);\n\n\n// ----------------------------------------------------\n// STEP 2: Use n8n/Luxon timezone correctly\n// ----------------------------------------------------\n\nconst now = DateTime.now().setZone(TIMEZONE);\n\nconst slots = [];\n\n\n// ----------------------------------------------------\n// STEP 3: Scan next 7 calendar days\n// ----------------------------------------------------\n\nfor (let d = 1; d <= daysToScan; d++) {\n\n  const targetDay = now.plus({ days: d });\n\n  // Luxon weekday:\n  // Monday = 1\n  // Tuesday = 2\n  // ...\n  // Saturday = 6\n  // Sunday = 7\n\n  if (targetDay.weekday === 6 || targetDay.weekday === 7) {\n    continue;\n  }\n\n  const dayStart = targetDay.startOf('day').set({\n    hour: workingStartHour,\n    minute: 0,\n    second: 0,\n    millisecond: 0\n  });\n\n  const dayEnd = targetDay.startOf('day').set({\n    hour: workingEndHour,\n    minute: 0,\n    second: 0,\n    millisecond: 0\n  });\n\n  let cursor = dayStart;\n\n  // --------------------------------------------------\n  // STEP 4: Generate 30-minute slots\n  // --------------------------------------------------\n\n  while (\n    cursor.plus({ minutes: slotIntervalMin }).toMillis()\n    <= dayEnd.toMillis()\n  ) {\n\n    const potentialSlotEnd =\n      cursor.plus({ minutes: slotIntervalMin });\n\n    const slotStartDate = cursor.toJSDate();\n    const slotEndDate = potentialSlotEnd.toJSDate();\n\n    // Check Calendar conflicts\n    const conflict = busyEvents.find(event =>\n      slotStartDate < event.end &&\n      slotEndDate > event.start\n    );\n\n    if (conflict) {\n\n      // Jump directly to the end of the conflicting event\n      const conflictEnd =\n        DateTime.fromJSDate(conflict.end)\n          .setZone(TIMEZONE);\n\n      if (conflictEnd > cursor) {\n        cursor = conflictEnd;\n      } else {\n        cursor = cursor.plus({\n          minutes: slotIntervalMin\n        });\n      }\n\n      continue;\n    }\n\n    // ------------------------------------------------\n    // Human-readable dropdown label\n    // ------------------------------------------------\n\n    const label = cursor.toFormat(\n      \"ccc, LLL d, h:mm a\"\n    );\n\n\n    // ------------------------------------------------\n    // Calendar-compatible ISO value\n    // Includes timezone offset\n    // ------------------------------------------------\n\n    const startTime =\n      cursor.toISO({\n        suppressMilliseconds: true\n      });\n\n\n    slots.push({\n      label,\n      startTime\n    });\n\n\n    // Move to next 30-minute interval\n    cursor = potentialSlotEnd;\n  }\n}\n\n\n// ----------------------------------------------------\n// STEP 5: Return clean output\n// ----------------------------------------------------\n\nreturn [\n  {\n    json: {\n      slots_list: slots,\n      slot_count: slots.length,\n      timezone: TIMEZONE\n    }\n  }\n];"
+      },
+      "id": "6033485b-ff06-43d6-8723-71d0bde8d976",
+      "name": "Calculate Open Gaps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4000,
+        3136
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1ce03b9-857a-4c90-8dd1-875e10b0ce23",
+              "name": "selection",
+              "value": "=selection_link: {{$execution.resumeUrl}}?action=selection",
+              "type": "string"
+            },
+            {
+              "id": "6df55b4f-2ba0-455b-a18c-512c88fb2dc5",
+              "name": "slot_names",
+              "value": "={{ $json.slots_list.map(slot => slot.label) }}",
+              "type": "array"
+            },
+            {
+              "id": "c246b5e3-5672-441e-bd32-5a126ce035d8",
+              "name": "slot_values",
+              "value": "={{ $json.slots_list.map(slot => slot.label) }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d91b512f-d64a-4f35-bcf4-42da229e89b0",
+      "name": "Edit Fields1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -3776,
+        3168
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Interview slot selection",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Slot booking",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[0] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[1] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[2] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[3] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[4] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[5] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[6] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[7] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[8] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[9] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[10] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[11] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[12] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[13] }}"
+                  },
+                  {
+                    "option": "={{ $('Edit Fields1').item.json.slot_names[14] }}"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -3328,
+        3168
+      ],
+      "id": "0e103852-9555-4a01-9af1-f123784cce68",
+      "name": "Wait2",
+      "webhookId": "0d8a3975-f192-41f9-ba78-2c9438c1e5cd"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "340edcc80e22d5f592bfbd7c615340ae03286c5f58abd7bcd0af06b1b695a972@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Event 1"
+        },
+        "start": "={{ \n  (() => {\n    const selection = $('Wait2').item.json['Slot booking'];\n    const timeMatch = selection.match(/(\\d{1,2}):(\\d{2})\\s*(AM|PM)/i);\n    const dateMatch = selection.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s*(\\d{1,2})/i);\n    if (!timeMatch || !dateMatch) return null;\n\n    let [_, hours, minutes, modifier] = timeMatch;\n    hours = parseInt(hours, 10);\n    if (modifier.toUpperCase() === 'PM' && hours < 12) hours += 12;\n    if (modifier.toUpperCase() === 'AM' && hours === 12) hours = 0;\n    \n    const months = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06', Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };\n    const month = months[dateMatch[1]];\n    const day = dateMatch[2].padStart(2, '0');\n    const year = $('Wait2').item.json['submittedAt'] ? $('Wait2').item.json['submittedAt'].substring(0, 4) : \"2026\"; \n\n    const pad = (num) => String(num).padStart(2, '0');\n    \n    // Crucial Change: Appended '+05:30' directly to lock it to India Time\n    return `${year}-${month}-${day}T${pad(hours)}:${pad(minutes)}:00+05:30`;\n  })()\n}}",
+        "end": "={{ \n  (() => {\n    const selection = $('Wait2').item.json['Slot booking'];\n    const timeMatch = selection.match(/(\\d{1,2}):(\\d{2})\\s*(AM|PM)/i);\n    const dateMatch = selection.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s*(\\d{1,2})/i);\n    if (!timeMatch || !dateMatch) return null;\n\n    let [_, hours, minutes, modifier] = timeMatch;\n    hours = parseInt(hours, 10);\n    let mins = parseInt(minutes, 10);\n    if (modifier.toUpperCase() === 'PM' && hours < 12) hours += 12;\n    if (modifier.toUpperCase() === 'AM' && hours === 12) hours = 0;\n    \n    const months = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06', Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };\n    const month = months[dateMatch[1]];\n    const day = dateMatch[2].padStart(2, '0');\n    const year = $('Wait2').item.json['submittedAt'] ? $('Wait2').item.json['submittedAt'].substring(0, 4) : \"2026\";\n\n    mins += 45;\n    if (mins >= 60) {\n      hours += Math.floor(mins / 60);\n      mins = mins % 60;\n    }\n\n    const pad = (num) => String(num).padStart(2, '0');\n    \n    // Crucial Change: Appended '+05:30' directly to lock it to India Time\n    return `${year}-${month}-${day}T${pad(hours)}:${pad(mins)}:00+05:30`;\n  })()\n}}",
+        "additionalFields": {
+          "summary": "Interview meeting"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -3088,
+        3136
+      ],
+      "id": "57afcc33-a347-42b4-ae2c-6727bce8749d",
+      "name": "Create an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "JnkkaVGIu2VS9zOL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Gmail Trigger').item.json.threadId }}",
+        "emailType": "text",
+        "message": "=Hello,\n\nGreat news! Your profile matches our requirements, and we would love to invite you to a technical interview.\n\nPlease click the link below to select your preferred interview time slot from our real-time calendar openings:\n{{ $execution.resumeFormUrl }}\n\nBest regards,\nHR Recruitment Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -3552,
+        3168
+      ],
+      "id": "0c12796b-8c14-4ba6-8cc7-d004dce103ad",
+      "name": "Reply to a message1",
+      "webhookId": "f6e234db-90d3-4b67-8921-59ac0915d9fb",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "AqUGZy9BbsPkj6QJ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Gmail Trigger').item.json.threadId }}",
+        "emailType": "text",
+        "message": "=Hello, {{ $('Code in JavaScript').item.json.candidateName }}\n\n\nwe are happy to inform you that your interview is scheduled on {{ $('Wait2').item.json['Slot booking'] }} with our HR and we hope you give your best in the interview.\n\nBest of Luck for the interview!\n\nBest Regards,\nHR Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -2864,
+        3232
+      ],
+      "id": "0ee8d6aa-4113-45eb-8412-b859e4c36947",
+      "name": "Reply to a message2",
+      "webhookId": "ad91e905-91d4-400f-abe4-b2ce234693e3",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "AqUGZy9BbsPkj6QJ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "spaceId": "spaces/AAQAZMJJ7uo",
+        "messageUi": {
+          "text": "=✅ New interview is schedule on :  {{ $('Wait2').item.json['Slot booking'] }} \n\n\nCandidate name: {{ $('Code in JavaScript').item.json.candidateName }}"
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        -2864,
+        3040
+      ],
+      "id": "064d00d5-300f-48a1-a637-31237c4d2d6d",
+      "name": "Create a message2",
+      "webhookId": "6e4d4f86-da81-4571-bf05-cc139c319351",
+      "credentials": {
+        "googleApi": {
+          "id": "WrU6xwlEY26v6YjE",
+          "name": "Chat account 7"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "spaceId": "spaces/AAQAZMJJ7uo",
+        "messageUi": {
+          "text": "=Please enter the rejection reason for this candidate.\n\nTo write the rejection reson click on the form link and write in the form: \n{{ $execution.resumeFormUrl }}\n\n\n"
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        -4224,
+        3520
+      ],
+      "id": "8383880d-257f-4804-95f9-d6cc17dd9f0e",
+      "name": "reject output1",
+      "webhookId": "6519e1dd-d656-4aef-b931-f0542509705a",
+      "credentials": {
+        "googleApi": {
+          "id": "WrU6xwlEY26v6YjE",
+          "name": "Chat account 7"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Reason to reject O/P",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Write the reason to rejecting the O/P"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -3936,
+        3520
+      ],
+      "id": "4c11c93c-9714-4efa-9311-8036d2373372",
+      "name": "Wait3",
+      "webhookId": "03f996c5-7652-4f8b-87c3-5d61091ad416"
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Gmail Trigger').item.json.threadId }}",
+        "emailType": "text",
+        "message": "=Hello, {{ $('Code in JavaScript').item.json.candidateName }}\n\nThank you for taking the time to apply for the effort you invested in the interview process. We truly appreciate your interest in joining our team.\n\nAfter careful deliberation, we regret to inform you that we have decided to move forward with another candidate whose qualifications more closely align with our current needs for this role.\n\nAnd the reason behind your rejection is : {{ $json['Write the reason to rejecting the O/P'] }}\n\n\nBest regards, \nHR Recruitment Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -3632,
+        3520
+      ],
+      "id": "f9e73630-e3e0-435f-a614-78e11b5f7995",
+      "name": "Reply to a message3",
+      "webhookId": "eb7028f9-343a-4b1d-9cf8-2aa205fead5a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "AqUGZy9BbsPkj6QJ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an experienced Technical Recruiter, Resume Screener, and Hiring Assistant.\n\nYour task is to objectively compare a candidate's Resume against a Job Description (JD) along with any provided Custom Screening Instructions to determine how well the candidate matches the role.\n\n# YOU MUST FOLLOW THESE RULES EXACTLY.\n\n-- You have to give all the matching skills.\n-- You have to give the missing skills.\n-- You have to give all proper details for the screening result\n-- In the output, you have to give all the details of why you give this specific match-score\n-- You have to give output only according to the Final output structure\n-- You are not allowed to add any other lines in the output\n-- You have to give overall ratings to the Screening and comparison\n-- You can give score in 0.5 floating values like 9.5, 7, 5.5\n-- The screening should be professional\n-- The output must be in markdown language.\n-- You have to list down\n\n\n\n\n## GENERAL RULES\n\n1. Evaluate ONLY based on evidence present in the Resume, Job Description, and Custom Instructions.\n2. Do NOT make assumptions according to Gender, Age, Nationality, Name, Employment gaps, or Resume formatting.\n3. If a skill is explicitly mentioned or clearly demonstrated through work/project descriptions, count it as an explicit match.\n4. If Custom Screening Instructions are provided, you MUST evaluate the candidate based on both the JD and those instructions. If Custom Screening Instructions are empty or say \"NONE\", screen the CV solely against the Job Description and use your own technical expertise to find which critical skills are missing from the CV.\n5. If there are no missing skills, then return none.\n\n## STEP 1 — EXTRACT JD & INSTRUCTION REQUIREMENTS\nExtract: Required Skills, Preferred Skills, Minimum Experience, Relevant Domain, Education, and Certifications. \nDetermine Seniority Level (Junior, Mid, Senior, Lead, Principal). If no Required/Preferred distinction is made, treat all technical skills as required.\n\n## STEP 2 — SCORING RUBRIC (Total Score = 10)\nEvaluate and provide a floating-point score (e.g., 8.5, 7, 5.5) out of 10 for each of the following 10 categories based strictly on the text:\n1. Hard Skills | 2. Job Title Match | 3. Years of Experience | 4. Industry Knowledge | 5. Soft Skills | 6. Work Methods | 7. Education & Certificates | 8. Proven Results | 9. Company Environment | 10. Growth Potential\n\n## FINAL CLASSIFICATION\n- 7 <= 10 : Approve\n- 4 <= 6.5 : Pending\n- >= 3.3 : Reject\n\n## INPUT DATA FOR EVALUATION:\n- - Candidate CV Text: {{ $('Code in JavaScript').item.json.emailBody }}\n- Built-in JD Text: {{ $('Code in JavaScript').item.json.builtinJdText }}\n- Custom Screening Instructions: {{ $('Code in JavaScript').item.json.customInstructions || \"NONE\" }}\n- Target Role: {{ $('Code in JavaScript').item.json.detectedPosition }}\n- Candidate Name: {{ $('Code in JavaScript').item.json.candidateName }}\n- Candidate Email: {{ $('Code in JavaScript').item.json.candidateEmail }}\n\nEvaluate this candidate strictly according to your system formatting protocols.\n\n\n\n\n\n\n\n\n## FINAL OUTPUT FORMAT\n🎯 CANDIDATE SCREENING REPORT\n\n========================================\n\n* 👤 Candidate Name : {{ $('If').item.json.candidateName }}\n* 📧 Contact Email   : {{ $('If').item.json.candidateEmail }}\n* 💼 Target Role    :{{ $('Code in JavaScript').item.json.detectedPosition }}\n* Total Match-score : [Provide dynamic overall single calculated score out of 10] ⭐ \n* Recommendation: [Approve, Pending, or Reject]\n\n=====================================\n\n* FINAL MATCH SCORE\n\n1. Hard Skills : [Match-score/10] | [1-sentence reason based on CV]\n2. Job Title Match : [Match-score/10] | [1-sentence reason based on CV]\n3. Years of Experience : [Match-score/10] | [1-sentence reason based on CV]\n4. Industry Knowledge : [Match-score/10] | [1-sentence reason based on CV]\n5. Soft Skills : [Match-score/10] | [1-sentence reason based on CV]\n6. Work Methods : [Match-score/10] | [1-sentence reason based on CV]\n7. Education & Cetificate : [Match-score/10] | [1-sentence reason based on CV]\n8. Proven Results : [Match-score/10] | [1-sentence reason based on CV]\n9. Company Environment : [Match-score/10] | [1-sentence reason based on CV]\n10. Growth Potential : [Match-score/10] | [1-sentence reason based on CV]\n\n========================\n\n* MATCHING SKILLS:\n[List all matching skills found as bullet points]\n\n\n==============\n\n* Matching skills according to custom Instructions\n[list matching skills according to the custom instructions]\n\n===========\n\n* MISSING SKILLS:\n[List all missing skills found as bullet points based on JD/Instructions, or \"none\"]\n\n\n===============\n\n\n* Missing skills according to the custom instructions\n[List all the missing skills according to the custom instructions]",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -5552,
+        3328
+      ],
+      "id": "a3fd16bc-4df8-422f-8dbb-48aaa0d0baaf",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "spaceId": "spaces/AAQAZMJJ7uo",
+        "messageUi": {
+          "text": "={{ $('AI Agent').item.json.output }}\n\n\nAccording to screening choose the option that candidate is approve or reject for the interview ? \n\n{{ $execution.resumeFormUrl }}"
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        -4960,
+        3328
+      ],
+      "id": "7778b823-281c-4601-878b-7cee9febedc1",
+      "name": "Create a message",
+      "webhookId": "15f95e01-9b72-44fe-9959-df47a9611c6f",
+      "credentials": {
+        "googleApi": {
+          "id": "WrU6xwlEY26v6YjE",
+          "name": "Chat account 7"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "app8qL7BVS0jk4iS5",
+          "mode": "list",
+          "cachedResultName": "HR recruitment Process Sheet",
+          "cachedResultUrl": "https://airtable.com/app8qL7BVS0jk4iS5"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblhmrWIerOJ4QC1R",
+          "mode": "list",
+          "cachedResultName": "position opening",
+          "cachedResultUrl": "https://airtable.com/app8qL7BVS0jk4iS5/tblhmrWIerOJ4QC1R"
+        },
+        "options": {
+          "downloadFields": [
+            "Job description and requirenments"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -6752,
+        3632
+      ],
+      "id": "7b959e20-d86e-49b0-b96e-cc82728a56fa",
+      "name": "Search records",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "nHWny9fumTd8tXha",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "has:attachment",
+          "readStatus": "unread"
+        },
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -7120,
+        3456
+      ],
+      "id": "5dd6d1db-d7cf-4407-8732-bf17c4b1c035",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "AqUGZy9BbsPkj6QJ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        -5472,
+        3600
+      ],
+      "id": "e4b04c1c-2874-4a43-83a8-70e2ec717cb9",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "CZi9VXKdbkODQj8M",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "340edcc80e22d5f592bfbd7c615340ae03286c5f58abd7bcd0af06b1b695a972@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Event 1"
+        },
+        "returnAll": true,
+        "options": {
+          "timeZone": {
+            "__rl": true,
+            "value": "Asia/Kolkata",
+            "mode": "list",
+            "cachedResultName": "Asia/Kolkata"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -4224,
+        3184
+      ],
+      "id": "0650519c-b919-4bb8-9c0d-2239082c0f88",
+      "name": "Get many events",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "JnkkaVGIu2VS9zOL",
+          "name": "Google Calendar account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "jdFile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "jdFile": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Create a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Get many events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "reject output1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to a message": {
+      "main": [
+        []
+      ]
+    },
+    "Calculate Open Gaps": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Reply to a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event": {
+      "main": [
+        [
+          {
+            "node": "Create a message2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply to a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to a message1": {
+      "main": [
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "reject output1": {
+      "main": [
+        [
+          {
+            "node": "Wait3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait3": {
+      "main": [
+        [
+          {
+            "node": "Reply to a message3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a message": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search records": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many events": {
+      "main": [
+        [
+          {
+            "node": "Calculate Open Gaps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "62cf667ff8eb9c68565036473874a3ad393f387ad5a120811f75ad0749203ded"
+  }
+}
